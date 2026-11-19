@@ -10,11 +10,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -38,12 +44,15 @@ import com.obd2logger.ui.theme.StatusRed
 import com.obd2logger.ui.theme.TrueBlack
 
 /**
- * Displays trouble codes (Stored, Pending, Permanent), MIL status, VIN, and protocol/freeze-frame summary.
- * Intentionally read-only (no clear-codes feature).
+ * Displays trouble codes (Stored, Pending, Permanent), MIL status, VIN, protocol/freeze-frame summary,
+ * and the Clear Codes (Mode 04) action button (enabled only when Connected and NOT logging).
  */
 @Composable
 fun DiagnosticResultsCard(
     diagnostics: SessionDiagnosticSnapshot,
+    canClearCodes: Boolean = false,
+    isClearingCodes: Boolean = false,
+    onRequestClearCodes: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val milColor: Color = when (diagnostics.milOn) {
@@ -184,6 +193,52 @@ fun DiagnosticResultsCard(
                         fontSize = 12.sp
                     )
                 }
+            }
+
+            HorizontalDivider(color = CardBorderDark)
+
+            OutlinedButton(
+                onClick = onRequestClearCodes,
+                enabled = canClearCodes && !isClearingCodes,
+                border = BorderStroke(
+                    1.dp,
+                    if (canClearCodes && !isClearingCodes) StatusRed.copy(alpha = 0.7f) else CardBorderDark
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                if (isClearingCodes) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = AccentYellow,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Backing up & Clearing...", color = AccentYellow, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.DeleteSweep,
+                        contentDescription = null,
+                        tint = if (canClearCodes) StatusRed else MutedWhite.copy(alpha = 0.4f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Clear Codes (Mode 04)",
+                        color = if (canClearCodes) StatusRed else MutedWhite.copy(alpha = 0.5f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+            if (!canClearCodes && !isClearingCodes) {
+                Text(
+                    text = "Clear Codes is only available when Connected and NOT logging.",
+                    color = MutedWhite.copy(alpha = 0.7f),
+                    fontSize = 11.sp
+                )
             }
         }
     }

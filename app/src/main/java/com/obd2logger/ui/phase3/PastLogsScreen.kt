@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
@@ -40,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,11 +51,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obd2logger.data.logging.CsvLogStorage
 import com.obd2logger.domain.model.SavedCsvLogSummary
+import com.obd2logger.domain.model.SessionLogGroup
 import com.obd2logger.ui.theme.AccentYellow
 import com.obd2logger.ui.theme.CardBorderDark
 import com.obd2logger.ui.theme.CardDark
+import com.obd2logger.ui.theme.InfoBlue
 import com.obd2logger.ui.theme.MutedWhite
 import com.obd2logger.ui.theme.PureWhite
+import com.obd2logger.ui.theme.StatusGreen
 import com.obd2logger.ui.theme.StatusRed
 import com.obd2logger.ui.theme.TrueBlack
 import java.text.SimpleDateFormat
@@ -60,15 +67,16 @@ import java.util.Locale
 
 @Composable
 fun PastLogsScreen(
-    logs: List<SavedCsvLogSummary>,
+    sessions: List<SessionLogGroup>,
     onRefresh: () -> Unit,
-    onOpenLog: (SavedCsvLogSummary) -> Unit,
-    onShareLog: (SavedCsvLogSummary) -> Unit,
-    onDeleteLog: (SavedCsvLogSummary) -> Unit,
+    onOpenMainCsv: (SavedCsvLogSummary) -> Unit,
+    onShareMainCsv: (SavedCsvLogSummary) -> Unit,
+    onShareSessionZip: (SessionLogGroup) -> Unit,
+    onDeleteSession: (SessionLogGroup) -> Unit,
     onOpenFolder: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var pendingDelete by remember { mutableStateOf<SavedCsvLogSummary?>(null) }
+    var pendingDelete by remember { mutableStateOf<SessionLogGroup?>(null) }
 
     LaunchedEffect(Unit) {
         onRefresh()
@@ -80,16 +88,19 @@ fun PastLogsScreen(
             containerColor = CardDark,
             titleContentColor = PureWhite,
             textContentColor = MutedWhite,
-            title = { Text("Delete CSV Log?", fontWeight = FontWeight.Bold) },
-            text = { Text("Permanently delete ${target.filename} from ${CsvLogStorage.DISPLAY_FOLDER_PATH}?") },
+            title = { Text("Delete Session Files?", fontWeight = FontWeight.Bold) },
+            text = {
+                val names = target.allFiles.joinToString("\n• ", prefix = "• ") { it.filename }
+                Text("Permanently delete all ${target.allFiles.size} file(s) for this session from ${CsvLogStorage.DISPLAY_FOLDER_PATH}?\n\n$names")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onDeleteLog(target)
+                        onDeleteSession(target)
                         pendingDelete = null
                     }
                 ) {
-                    Text("DELETE", color = StatusRed, fontWeight = FontWeight.ExtraBold)
+                    Text("DELETE ALL", color = StatusRed, fontWeight = FontWeight.ExtraBold)
                 }
             },
             dismissButton = {
@@ -113,7 +124,7 @@ fun PastLogsScreen(
         ) {
             Column {
                 Text(
-                    text = "PAST LOGS (${logs.size})",
+                    text = "PAST LOGS (${sessions.size})",
                     color = PureWhite,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 18.sp
@@ -152,7 +163,7 @@ fun PastLogsScreen(
             }
         }
 
-        if (logs.isEmpty()) {
+        if (sessions.isEmpty()) {
             Card(
                 modifier = Modifier.fillMaxSize(),
                 colors = CardDefaults.cardColors(containerColor = CardDark),
@@ -176,13 +187,13 @@ fun PastLogsScreen(
                             modifier = Modifier.size(44.dp)
                         )
                         Text(
-                            text = "No CSV logs recorded yet",
+                            text = "No session logs recorded yet",
                             color = PureWhite,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Connect to your OBD2 adapter and tap START LOGGING on Home to create your first trackLog CSV.",
+                            text = "Connect to your OBD2 adapter and tap START LOGGING on Home to create your first session.",
                             color = MutedWhite,
                             fontSize = 13.sp
                         )
@@ -194,12 +205,13 @@ fun PastLogsScreen(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(items = logs, key = { it.uri }) { log ->
-                    PastLogCard(
-                        log = log,
-                        onOpen = { onOpenLog(log) },
-                        onShare = { onShareLog(log) },
-                        onDelete = { pendingDelete = log }
+                items(items = sessions, key = { it.stem }) { group ->
+                    SessionGroupCard(
+                        group = group,
+                        onOpenMain = { group.mainCsv?.let(onOpenMainCsv) },
+                        onShareMain = { group.mainCsv?.let(onShareMainCsv) },
+                        onShareZip = { onShareSessionZip(group) },
+                        onDelete = { pendingDelete = group }
                     )
                 }
             }
@@ -207,15 +219,17 @@ fun PastLogsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PastLogCard(
-    log: SavedCsvLogSummary,
-    onOpen: () -> Unit,
-    onShare: () -> Unit,
+private fun SessionGroupCard(
+    group: SessionLogGroup,
+    onOpenMain: () -> Unit,
+    onShareMain: () -> Unit,
+    onShareZip: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val dateLabel = remember(log.lastModifiedMs) {
-        SimpleDateFormat("dd-MMM-yyyy HH:mm", Locale.US).format(Date(log.lastModifiedMs))
+    val dateLabel = remember(group.lastModifiedMs) {
+        SimpleDateFormat("dd-MMM-yyyy HH:mm", Locale.US).format(Date(group.lastModifiedMs))
     }
 
     Card(
@@ -243,7 +257,7 @@ private fun PastLogCard(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = log.filename,
+                        text = group.stem,
                         color = PureWhite,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -253,72 +267,116 @@ private fun PastLogCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "$dateLabel • ${formatFileSize(log.sizeBytes)}",
+                        text = "$dateLabel • ${group.allFiles.size} file(s) • ${formatFileSize(group.totalSizeBytes)}",
                         color = MutedWhite,
                         fontSize = 12.sp
                     )
                 }
             }
 
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (group.mainCsv != null) SessionFileTag("Main CSV", AccentYellow)
+                if (group.mode06Csv != null) SessionFileTag("Mode 06", InfoBlue)
+                if (group.extendedCsv != null) SessionFileTag("Extended", StatusGreen)
+                if (group.preclearedJson != null) SessionFileTag("Pre-Clear", StatusRed)
+                if (group.sessionZip != null) SessionFileTag("ZIP", PureWhite)
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = onOpen,
-                    border = BorderStroke(1.dp, CardBorderDark),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(42.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = null,
-                        tint = PureWhite,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Open", color = PureWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                if (group.mainCsv != null) {
+                    OutlinedButton(
+                        onClick = onOpenMain,
+                        border = BorderStroke(1.dp, CardBorderDark),
+                        modifier = Modifier.height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Open Main CSV",
+                            tint = PureWhite,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onShareMain,
+                        border = BorderStroke(1.dp, AccentYellow.copy(alpha = 0.7f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = null,
+                            tint = AccentYellow,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Main CSV", color = AccentYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 OutlinedButton(
-                    onClick = onShare,
-                    border = BorderStroke(1.dp, AccentYellow.copy(alpha = 0.7f)),
+                    onClick = onShareZip,
+                    border = BorderStroke(1.dp, StatusGreen.copy(alpha = 0.7f)),
                     modifier = Modifier
                         .weight(1f)
-                        .height(42.dp),
+                        .height(40.dp),
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
                     Icon(
-                        Icons.Default.Share,
+                        Icons.Default.Archive,
                         contentDescription = null,
-                        tint = AccentYellow,
-                        modifier = Modifier.size(16.dp)
+                        tint = StatusGreen,
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share", color = AccentYellow, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Share ZIP", color = StatusGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
 
                 OutlinedButton(
                     onClick = onDelete,
                     border = BorderStroke(1.dp, StatusRed.copy(alpha = 0.6f)),
                     modifier = Modifier
-                        .height(42.dp)
+                        .height(40.dp)
                         .background(TrueBlack, RoundedCornerShape(10.dp)),
                     shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp)
                 ) {
                     Icon(
                         Icons.Default.DeleteOutline,
-                        contentDescription = "Delete",
+                        contentDescription = "Delete Session",
                         tint = StatusRed,
                         modifier = Modifier.size(18.dp)
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SessionFileTag(label: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .background(color.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        Text(
+            text = label,
+            color = color,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold
+        )
     }
 }

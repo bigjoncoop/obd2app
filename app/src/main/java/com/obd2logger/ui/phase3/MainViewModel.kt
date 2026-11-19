@@ -1,6 +1,7 @@
 package com.obd2logger.ui.phase3
 
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.obd2logger.data.logging.CsvLogStorage
@@ -10,16 +11,21 @@ import com.obd2logger.data.logging.RawSessionLogRepository
 import com.obd2logger.data.preferences.AdapterPreferencesRepository
 import com.obd2logger.data.preferences.PollingSpeed
 import com.obd2logger.data.preferences.SavedWifiEndpoint
+import com.obd2logger.data.protocol.ClearCodesResult
 import com.obd2logger.data.protocol.ElmSessionManager
+import com.obd2logger.data.protocol.ManufacturerPidRepository
 import com.obd2logger.data.protocol.SensorPollingEngine
 import com.obd2logger.data.transport.BluetoothDeviceScanner
 import com.obd2logger.domain.model.AdapterConfig
 import com.obd2logger.domain.model.ConnectionState
 import com.obd2logger.domain.model.LiveSensorValue
 import com.obd2logger.domain.model.LoggingState
+import com.obd2logger.domain.model.ManufacturerPidState
+import com.obd2logger.domain.model.Mode06TestResult
 import com.obd2logger.domain.model.SavedCsvLogSummary
 import com.obd2logger.domain.model.ScannedBtDevice
 import com.obd2logger.domain.model.SessionDiagnosticSnapshot
+import com.obd2logger.domain.model.SessionLogGroup
 import com.obd2logger.domain.model.TerminalLogEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +46,7 @@ class MainViewModel @Inject constructor(
     private val logRepository: RawSessionLogRepository,
     private val preferencesRepository: AdapterPreferencesRepository,
     private val loggingCoordinator: LoggingSessionCoordinator,
+    private val manufacturerPidRepository: ManufacturerPidRepository,
     private val csvLogStorage: CsvLogStorage,
     private val locationProvider: LocationSnapshotProvider
 ) : ViewModel() {
@@ -55,7 +62,15 @@ class MainViewModel @Inject constructor(
 
     val loggingState: StateFlow<LoggingState> = loggingCoordinator.loggingState
     val latestDiagnostics: StateFlow<SessionDiagnosticSnapshot?> = loggingCoordinator.latestDiagnostics
-    val savedLogs: StateFlow<List<SavedCsvLogSummary>> = loggingCoordinator.savedLogs
+    val latestMode06Tests: StateFlow<List<Mode06TestResult>> = loggingCoordinator.latestMode06Tests
+    val sessionGroups: StateFlow<List<SessionLogGroup>> = loggingCoordinator.sessionGroups
+    val isClearingCodes: StateFlow<Boolean> = loggingCoordinator.isClearingCodes
+    val lastClearResult: StateFlow<ClearCodesResult?> = loggingCoordinator.lastClearResult
+
+    val manufacturerPidStates: StateFlow<List<ManufacturerPidState>> = manufacturerPidRepository.pidStates
+    val detectedMakes: StateFlow<Set<String>> = manufacturerPidRepository.detectedMakes
+    val isProbingMfrPids: StateFlow<Boolean> = loggingCoordinator.isProbingMfrPids
+    val mfrImportMessage: StateFlow<String?> = manufacturerPidRepository.lastImportMessage
 
     val lastAdapterConfig: StateFlow<AdapterConfig?> = preferencesRepository.lastAdapterConfig
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -145,8 +160,31 @@ class MainViewModel @Inject constructor(
     fun stopLogging() = loggingCoordinator.stopLogging()
     fun dismissPostLogScreen() = loggingCoordinator.dismissPostLogScreen()
 
+    fun clearCodes() = loggingCoordinator.clearCodes()
+    fun dismissClearResult() = loggingCoordinator.dismissClearResult()
+
+    fun probeManufacturerPids() = loggingCoordinator.probeManufacturerPidsNow()
+    fun setManufacturerPidEnabled(pidId: String, enabled: Boolean) =
+        manufacturerPidRepository.setPidEnabled(pidId, enabled)
+
+    fun importManufacturerPidJson(uri: Uri) {
+        manufacturerPidRepository.importJsonFromUri(uri)
+    }
+
     fun refreshSavedLogs() = loggingCoordinator.refreshSavedLogs()
-    fun deleteSavedLog(summary: SavedCsvLogSummary) = loggingCoordinator.deleteSavedLog(summary)
+    fun deleteSessionGroup(group: SessionLogGroup) = loggingCoordinator.deleteSessionGroup(group)
+
+    fun shareSessionZip(group: SessionLogGroup, onReady: (Intent) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            loggingCoordinator.ensureSessionZipForGroup(group)
+                .onSuccess { zipSummary ->
+                    onReady(csvLogStorage.buildShareIntent(zipSummary.uri, zipSummary.filename))
+                }
+                .onFailure { err ->
+                    onError(err.message ?: "Unable to build session ZIP.")
+                }
+        }
+    }
 
     fun buildShareCsvIntent(uriString: String, filename: String): Intent =
         csvLogStorage.buildShareIntent(uriString, filename)

@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -81,6 +82,10 @@ import com.obd2logger.ui.phase1.copyLogToClipboard
 import com.obd2logger.ui.phase1.entriesCountLabel
 import com.obd2logger.ui.phase1.shareLog
 import com.obd2logger.ui.phase2.LiveSensorsCard
+import com.obd2logger.ui.phase4.ClearCodesResultDialog
+import com.obd2logger.ui.phase4.ClearCodesWarningDialog
+import com.obd2logger.ui.phase4.ManufacturerPidsScreen
+import com.obd2logger.ui.phase4.MonitorTestsCard
 import com.obd2logger.ui.theme.AccentYellow
 import com.obd2logger.ui.theme.CardBorderDark
 import com.obd2logger.ui.theme.CardDark
@@ -99,6 +104,7 @@ private data class NavTab(
 
 private val navTabs = listOf(
     NavTab("Home", Icons.Default.Home),
+    NavTab("Mfr PIDs", Icons.Default.Build),
     NavTab("Terminal", Icons.Default.Terminal),
     NavTab("Logs", Icons.Default.Folder),
     NavTab("Settings", Icons.Default.Settings)
@@ -131,12 +137,20 @@ fun MainScreen(
     val isBatchFallbackActive by viewModel.isBatchFallbackActive.collectAsStateWithLifecycle()
     val loggingState by viewModel.loggingState.collectAsStateWithLifecycle()
     val latestDiagnostics by viewModel.latestDiagnostics.collectAsStateWithLifecycle()
-    val savedLogs by viewModel.savedLogs.collectAsStateWithLifecycle()
+    val latestMode06Tests by viewModel.latestMode06Tests.collectAsStateWithLifecycle()
+    val sessionGroups by viewModel.sessionGroups.collectAsStateWithLifecycle()
+    val isClearingCodes by viewModel.isClearingCodes.collectAsStateWithLifecycle()
+    val lastClearResult by viewModel.lastClearResult.collectAsStateWithLifecycle()
+    val manufacturerPidStates by viewModel.manufacturerPidStates.collectAsStateWithLifecycle()
+    val detectedMakes by viewModel.detectedMakes.collectAsStateWithLifecycle()
+    val isProbingMfrPids by viewModel.isProbingMfrPids.collectAsStateWithLifecycle()
+    val mfrImportMessage by viewModel.mfrImportMessage.collectAsStateWithLifecycle()
     val pollingSpeed by viewModel.pollingSpeed.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
 
     var hasLocationPermission by remember { mutableStateOf(viewModel.hasLocationPermission()) }
     var showConnectionSheet by rememberSaveable { mutableStateOf(false) }
+    var showClearWarningDialog by rememberSaveable { mutableStateOf(false) }
     var manualCommandText by rememberSaveable { mutableStateOf("") }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -150,6 +164,14 @@ fun MainScreen(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         hasLocationPermission = viewModel.hasLocationPermission()
+    }
+
+    val jsonImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importManufacturerPidJson(uri)
+        }
     }
 
     fun triggerStartLogging() {
@@ -194,7 +216,6 @@ fun MainScreen(
         }
     }
 
-    // Wait briefly until DataStore loads onboarding flag to avoid flash
     when (onboardingCompleted) {
         null -> {
             Box(modifier = Modifier.fillMaxSize().background(TrueBlack))
@@ -209,13 +230,16 @@ fun MainScreen(
         true -> Unit
     }
 
-    // Show dedicated "Log Saved" screen immediately after stopping a log
     val stoppedState = loggingState as? LoggingState.Stopped
     if (stoppedState != null) {
         LogSavedScreen(
             summary = stoppedState.summary,
             diagnostics = stoppedState.diagnostics,
-            onShare = {
+            artifacts = stoppedState.artifacts,
+            zipUri = stoppedState.zipUri,
+            zipFilename = stoppedState.zipFilename,
+            isZipBuilding = stoppedState.isZipBuilding,
+            onShareMainCsv = {
                 runCatching {
                     context.startActivity(
                         viewModel.buildShareCsvIntent(
@@ -225,10 +249,34 @@ fun MainScreen(
                     )
                 }
             },
+            onShareSessionZip = {
+                val uri = stoppedState.zipUri ?: return@LogSavedScreen
+                val name = stoppedState.zipFilename ?: return@LogSavedScreen
+                runCatching {
+                    context.startActivity(viewModel.buildShareCsvIntent(uri, name))
+                }
+            },
             onOpenFolder = { openFolderSafe() },
             onDone = { viewModel.dismissPostLogScreen() }
         )
         return
+    }
+
+    if (showClearWarningDialog) {
+        ClearCodesWarningDialog(
+            onConfirmClear = {
+                showClearWarningDialog = false
+                viewModel.clearCodes()
+            },
+            onDismiss = { showClearWarningDialog = false }
+        )
+    }
+
+    lastClearResult?.let { clearRes ->
+        ClearCodesResultDialog(
+            result = clearRes,
+            onDismiss = viewModel::dismissClearResult
+        )
     }
 
     if (showConnectionSheet) {
@@ -255,6 +303,9 @@ fun MainScreen(
             }
         )
     }
+
+    val isConnected = connectionState is ConnectionState.Connected
+    val isActivelyLogging = loggingState is LoggingState.Preparing || loggingState is LoggingState.Logging
 
     Scaffold(
         modifier = Modifier
@@ -284,7 +335,8 @@ fun MainScreen(
                             Text(
                                 text = tab.label,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Normal,
-                                fontSize = 12.sp
+                                fontSize = 11.sp,
+                                maxLines = 1
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
@@ -340,13 +392,26 @@ fun MainScreen(
                             exit = fadeOut(tween(200))
                         ) {
                             latestDiagnostics?.let { diag ->
-                                DiagnosticResultsCard(diagnostics = diag)
+                                DiagnosticResultsCard(
+                                    diagnostics = diag,
+                                    canClearCodes = isConnected && !isActivelyLogging,
+                                    isClearingCodes = isClearingCodes,
+                                    onRequestClearCodes = { showClearWarningDialog = true }
+                                )
                             }
+                        }
+
+                        AnimatedVisibility(
+                            visible = latestMode06Tests.isNotEmpty(),
+                            enter = fadeIn(tween(250)),
+                            exit = fadeOut(tween(200))
+                        ) {
+                            MonitorTestsCard(tests = latestMode06Tests)
                         }
 
                         LiveSensorsCard(
                             modifier = Modifier.height(420.dp),
-                            isConnected = connectionState is ConnectionState.Connected,
+                            isConnected = isConnected,
                             liveValues = liveSensorValues,
                             isPollingEnabled = isPollingEnabled,
                             isBatchingEnabled = isBatchingEnabled,
@@ -358,6 +423,22 @@ fun MainScreen(
                 }
 
                 1 -> {
+                    ManufacturerPidsScreen(
+                        pidStates = manufacturerPidStates,
+                        detectedMakes = detectedMakes,
+                        isConnected = isConnected,
+                        isLogging = isActivelyLogging,
+                        isProbing = isProbingMfrPids,
+                        lastImportMessage = mfrImportMessage,
+                        onProbeNow = viewModel::probeManufacturerPids,
+                        onImportJson = {
+                            jsonImportLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        onTogglePid = viewModel::setManufacturerPidEnabled
+                    )
+                }
+
+                2 -> {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -373,7 +454,7 @@ fun MainScreen(
                             showHeartbeats = showHeartbeats,
                             isSendingCommand = isSendingCommand,
                             isTransportWritable = connectionState is ConnectionState.AdapterReady ||
-                                connectionState is ConnectionState.Connected,
+                                isConnected,
                             manualCommandText = manualCommandText,
                             onManualCommandChange = { manualCommandText = it },
                             onSendCommand = { cmd ->
@@ -405,27 +486,34 @@ fun MainScreen(
                     }
                 }
 
-                2 -> {
+                3 -> {
                     PastLogsScreen(
-                        logs = savedLogs,
+                        sessions = sessionGroups,
                         onRefresh = viewModel::refreshSavedLogs,
-                        onOpenLog = { log -> openCsvSafe(log.uri) },
-                        onShareLog = { log ->
+                        onOpenMainCsv = { log -> openCsvSafe(log.uri) },
+                        onShareMainCsv = { log ->
                             runCatching {
                                 context.startActivity(viewModel.buildShareCsvIntent(log.uri, log.filename))
                             }
                         },
-                        onDeleteLog = { log ->
-                            viewModel.deleteSavedLog(log)
+                        onShareSessionZip = { group ->
+                            viewModel.shareSessionZip(
+                                group = group,
+                                onReady = { intent -> runCatching { context.startActivity(intent) } },
+                                onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                            )
+                        },
+                        onDeleteSession = { group ->
+                            viewModel.deleteSessionGroup(group)
                             scope.launch {
-                                snackbarHostState.showSnackbar("Deleted ${log.filename}")
+                                snackbarHostState.showSnackbar("Deleted session ${group.stem}")
                             }
                         },
                         onOpenFolder = { openFolderSafe() }
                     )
                 }
 
-                3 -> {
+                4 -> {
                     SettingsScreen(
                         savedWifiEndpoint = savedWifiEndpoint,
                         pollingSpeed = pollingSpeed,
