@@ -1,0 +1,29 @@
+Phase 2 (live sensor values) is complete and verified. No Phase 1 connection, initialization, heartbeat, or auto-reconnect logic was modified.
+
+### Summary of What Was Built
+
+1. Data-Driven PID Table & Models
+   - app/src/main/java/com/obd2logger/domain/model/PidDefinition.kt: Defines PidPriority (HIGH = every cycle, MEDIUM = every 3rd cycle, LOW = every 8th cycle) and PidDefinition (id, name, expectedBytes, formula, imperialUnit, priority, supported, decimals), returning "--" for null/non-finite values.
+   - app/src/main/java/com/obd2logger/data/protocol/PidTable.kt: Single data-driven table of 33 Mode 01 sensor PIDs with imperial-unit formulas (rpm, mph, °F, psi, %, lb/min, V, °, sec, mi, min, λ, gal/h) and withSupportFlags(supportedPids) to mark supported = true only for PIDs present in the vehicle's 0100/0120/0140... bitmasks.
+   - app/src/main/java/com/obd2logger/domain/model/LiveSensorValue.kt: UI model holding the latest validated value or "--" when no data is available.
+
+2. Response Header Validation (41 + PID) & Multi-PID Parsing
+   - app/src/main/java/com/obd2logger/data/protocol/ElmResponseParser.kt: Added MultiPidParseResult and parseMultiPidMode01Response(...) to validate the 41 service header and each <PID><data> segment (including CAN headers and ISO-TP multi-frame responses). Single-PID responses continue to be validated via parseObdResponse(expectedService = 0x01, expectedPid = pid.id).
+
+3. Prioritized Polling Loop with Multi-PID Batching & Automatic Fallback
+   - app/src/main/java/com/obd2logger/data/protocol/SensorPollingEngine.kt:
+     - Polls only supported PIDs from ConnectionState.Connected.supportedPids using PidPriority intervals (selectDuePids).
+     - Initializes all supported sensors to "--" (never fake values) and clears a sensor back to "--" on error or invalid response.
+     - Optional multi-PID batching (buildPidBatches, packing up to 3 PIDs / 6 payload bytes per CAN frame) that automatically falls back to single-PID requests for failed batches and disables batching for the session after 2 consecutive batch failures.
+   - app/src/main/java/com/obd2logger/data/protocol/ElmSessionManager.kt: Added sendPolledCommand(...) routing polling commands through the existing commandMutex single-command queue with raw TX/RX logging enabled (isHeartbeat = false).
+   - app/src/main/java/com/obd2logger/data/transport/SimulatedObdTransport.kt: Updated buildObdResponse so the debug simulator also responds to multi-PID Mode 01 commands (e.g., 010C0D11).
+
+4. UI: Live Sensors List & Debug Terminal
+   - app/src/main/java/com/obd2logger/ui/phase2/LiveSensorsCard.kt: Scrolling LazyColumn displaying sensor name, PID/priority, live value (or "--"), and imperial unit, plus Polling ON/Paused and Batch ON/OFF/Fallback 1x chips.
+   - app/src/main/java/com/obd2logger/ui/phase1/Phase1DebugTerminalScreen.kt & app/src/main/java/com/obd2logger/ui/phase1/Phase1ViewModel.kt: Added a Live Sensors / Debug Terminal tab switcher below ConnectionStatusCard, keeping the Debug Terminal and raw TX/RX logging fully operational.
+
+### Verification
+- Ran ./gradlew testDebugUnitTest assembleDebug (exited 0):
+  - ElmResponseParserTest: 9 tests passed, 0 failed, 0 skipped.
+  - Phase2PidAndPollingTest (app/src/test/java/com/obd2logger/data/protocol/Phase2PidAndPollingTest.kt): 6 tests passed, 0 failed, 0 skipped.
+  - Debug APK built via assembleDebug.

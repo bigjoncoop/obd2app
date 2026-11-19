@@ -1,0 +1,35 @@
+# Gradle & Build outputs
+.gradle/
+.kotlin/
+build/
+app/build/
+*/build/
+captures/
+
+# Local environment & IDE
+local.properties
+.idea/
+*.iml
+.DS_Store
+*.hprof
+
+# Signing keys, secrets, & API keys
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+keystore.properties
+signing.properties
+.env
+.env.*
+google-services.json
+*secret*
+*password*
+
+# Exported OBD logs, CSVs, & session archives
+*.csv
+*.log
+*.zip
+trackLog-*
+OBDLogs/

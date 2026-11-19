@@ -1,0 +1,48 @@
+Phase 3 is implemented and verified.
+
+### Phase 1 & Phase 2 Compatibility Note
+- **Phase 1 connection logic** (`ElmSessionManager`, `BluetoothClassicTransport`, `BleTransport`, `WifiTransport`, `ElmResponseParser`) was **not modified**.
+- **Phase 2 updates**:
+  - `app/src/main/java/com/obd2logger/data/protocol/PidTable.kt`: Changed MAF (`0x10`) from `lb/min` to `g/s` (`uWord(bytes) / 100.0`) and added the additional Mode 01 PIDs referenced by the Phase 3 CSV schema (with `showInLiveUi = false` on bitmask/enum PIDs like `0x03`, `0x12`, `0x13`, `0x1D`, `0x51`).
+  - `app/src/main/java/com/obd2logger/data/protocol/SensorPollingEngine.kt`: Added `pausePollingGracefully()` (sets polling disabled and awaits `pollingJob?.join()` instead of cancelling mid-command so session-start queries never overlap polling traffic), wired the `PollingSpeed` setting (`FAST` retains the original `25ms` / `40ms` delays), and stored `rawBytes` in `app/src/main/java/com/obd2logger/domain/model/LiveSensorValue.kt` for multi-field Mode 01 PIDs.
+  - `app/src/main/java/com/obd2logger/ui/phase2/LiveSensorsCard.kt`: Filters displayed rows to `pid.showInLiveUi`.
+
+---
+
+### Summary of What Was Built
+
+1. **Session-Start Diagnostic Sequence**
+   - `app/src/main/java/com/obd2logger/data/protocol/SessionDiagnosticsRunner.kt`: Pauses polling via `pausePollingGracefully()`, sequentially queries `ATDP`, `ATRV`, `0101`, `0141`, `011C`, Stored (`03`), Pending (`07`), Permanent (`0A`), Mode 02 Freeze Frame (`020200` + key FF PIDs), and Mode 09 (`0900`, `0902`, `0904`, `0906`, `090A`) with graceful `"-"` fallback on `NO DATA`/errors, then resumes polling.
+   - `app/src/main/java/com/obd2logger/data/protocol/SaeDtcTable.kt` & `app/src/main/java/com/obd2logger/data/protocol/DtcDecoder.kt`: Bundled offline SAE J2012 generic `P/C/B/U` DTC dictionary + CAN/non-CAN/multi-ECU DTC decoder.
+   - `app/src/main/java/com/obd2logger/data/protocol/DiagnosticDecoder.kt` & `app/src/main/java/com/obd2logger/domain/model/DiagnosticModels.kt`: Decoders and models for `0101`/`0141` readiness monitors, Mode 09 VIN/Cal ID/CVN/ECU Name, `011C`, `0103`, `0151`, `0112`, `0113`/`011D`, `ATDP`, `ATRV`, and Mode 02 freeze frames.
+   - `app/src/main/java/com/obd2logger/data/transport/SimulatedObdTransport.kt`: Added simulated responses for `0141`, `011C`, Mode 02 freeze frame, `0900`/`0904`/`0906`/`090A`, and remaining bitmask Mode 01 PIDs for offline testing.
+
+2. **Torque-Compatible Fixed-Schema CSV Logging & Foreground Service**
+   - `app/src/main/java/com/obd2logger/data/logging/CsvSchema.kt`: Data-driven **137-column** table covering sections **A–M** in order, outputting `"-"` for unsupported/unavailable values and carrying forward last-known values between reads.
+   - `app/src/main/java/com/obd2logger/data/logging/CsvWriter.kt`: RFC 4180 cell escaping (commas, quotes, CR, LF), `trackLog-YYYY-Mon-DD_HH-MM-SS.csv` filename formatting, and `DD-Mon-YYYY HH:MM:SS.mmm` local `Device Time` formatting.
+   - `app/src/main/java/com/obd2logger/data/logging/CsvLogStorage.kt`: Saves CSV logs to `Documents/OBDLogs` via `MediaStore` (with API 26–28 fallback) and provides list/open/share/delete/folder intents.
+   - `app/src/main/java/com/obd2logger/data/logging/LocationSnapshotProvider.kt`: Optional native `LocationManager` GPS provider emitting `"-"` unless location permission is granted.
+   - `app/src/main/java/com/obd2logger/data/logging/LoggingSessionCoordinator.kt` & `app/src/main/java/com/obd2logger/service/ObdLoggingService.kt`: Runs 1 Hz CSV logging in a `connectedDevice` foreground service with partial wake lock and per-row flush; keeps the CSV open and writes `"-"` OBD cells during mid-log disconnects until auto-reconnect restores `Connected` state.
+
+3. **UI, Settings, Onboarding & Permissions**
+   - `app/src/main/java/com/obd2logger/ui/phase3/MainScreen.kt`, `app/src/main/java/com/obd2logger/ui/phase3/MainViewModel.kt`, `app/src/main/java/com/obd2logger/MainActivity.kt`: Material 3 dark UI (`#000000` background, `#1E1E1E` cards, `#FFC107` accent) with Home (status card, glowing `START LOGGING` / `STOP LOGGING` with elapsed timer & row count, diagnostic results, live sensors), Debug Terminal, Past Logs, and Settings tabs.
+   - `app/src/main/java/com/obd2logger/ui/phase3/DiagnosticResultsCard.kt`: Displays MIL status, DTC count, VIN, protocol/ECU, stored/pending/permanent codes, and freeze frame summary (no clear-codes feature).
+   - `app/src/main/java/com/obd2logger/ui/phase3/LogSavedScreen.kt` & `app/src/main/java/com/obd2logger/ui/phase3/PastLogsScreen.kt`: Post-log summary with Share & Open Folder buttons, plus Past Logs open/share/delete management.
+   - `app/src/main/java/com/obd2logger/ui/phase3/SettingsScreen.kt` & `app/src/main/java/com/obd2logger/ui/phase3/OnboardingScreen.kt`: Wi-Fi IP/port, polling speed, keep screen on, optional GPS permission trigger, and 3-card first-run onboarding persisted in `app/src/main/java/com/obd2logger/data/preferences/AdapterPreferencesRepository.kt`.
+   - `app/src/main/AndroidManifest.xml` & `app/src/main/res/xml/file_paths.xml`: Added foreground service, notification, wake lock, and legacy storage permissions plus service registration.
+
+4. **Tests & Documentation**
+   - Added `app/src/test/java/com/obd2logger/data/protocol/DtcDecoderTest.kt`, `app/src/test/java/com/obd2logger/data/logging/CsvWriterAndSchemaTest.kt`, `app/src/test/java/com/obd2logger/data/protocol/DiagnosticDecoderTest.kt`, and updated `app/src/test/java/com/obd2logger/data/protocol/Phase2PidAndPollingTest.kt` for MAF `g/s`.
+   - Updated `README.md` with build/test instructions, how to add columns/PIDs, and the full 137-column schema reference.
+
+---
+
+### Verification
+Ran `./gradlew testDebugUnitTest assembleDebug --rerun-tasks` after the final edit:
+- **Build (`assembleDebug`)**: Passed (exit code `0`).
+- **Unit Tests (`testDebugUnitTest`)**: All **25 tests** across 5 suites passed (`0` skipped, `0` failures, `0` errors):
+  - `CsvWriterAndSchemaTest`: 3 passed
+  - `DiagnosticDecoderTest`: 3 passed
+  - `DtcDecoderTest`: 4 passed
+  - `ElmResponseParserTest`: 9 passed
+  - `Phase2PidAndPollingTest`: 6 passed
