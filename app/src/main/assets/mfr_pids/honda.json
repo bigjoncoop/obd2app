@@ -1,0 +1,52 @@
+{
+  "pids": [
+    {
+      "id": "honda_ecm_coolant_f405",
+      "name": "ECM Coolant Temp (UDS)",
+      "makes": ["Honda", "Acura"],
+      "moduleName": "ECM",
+      "requestHeader": "7E0",
+      "command": "22F405",
+      "expectedBytes": 1,
+      "formula": "(A - 40) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 0,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F405"
+    },
+    {
+      "id": "honda_ecm_rpm_f40c",
+      "name": "ECM Engine RPM (UDS)",
+      "makes": ["Honda", "Acura"],
+      "moduleName": "ECM",
+      "requestHeader": "7E0",
+      "command": "22F40C",
+      "expectedBytes": 2,
+      "formula": "u16(A, B) / 4",
+      "unit": "rpm",
+      "min": 0,
+      "max": 12000,
+      "decimals": 0,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F40C"
+    },
+    {
+      "id": "honda_ecm_voltage_f442",
+      "name": "ECM Control Module Voltage (UDS)",
+      "makes": ["Honda", "Acura"],
+      "moduleName": "ECM",
+      "requestHeader": "7E0",
+      "command": "22F442",
+      "expectedBytes": 2,
+      "formula": "u16(A, B) / 1000",
+      "unit": "V",
+      "min": 0,
+      "max": 24,
+      "decimals": 2,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F442"
+    }
+  ]
+}

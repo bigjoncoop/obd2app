@@ -1,0 +1,54 @@
+{
+  "pids": [
+    {
+      "id": "ford_tft_1e1c",
+      "name": "Ford Transmission Fluid Temp",
+      "makes": ["Ford", "Lincoln", "Mercury"],
+      "years": "2011+",
+      "moduleName": "TCM",
+      "requestHeader": "7E1",
+      "command": "221E1C",
+      "expectedBytes": 2,
+      "formula": "(signed16(A, B) / 16) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 1,
+      "category": "Transmission",
+      "source": "Ford Mode 22 DID 1E1C (6R80 / 6F35 / 10R80 TCM)"
+    },
+    {
+      "id": "ford_tft_1674",
+      "name": "Ford Transmission Fluid Temp (Early CAN)",
+      "makes": ["Ford", "Lincoln", "Mercury"],
+      "years": "2005-2011",
+      "moduleName": "PCM",
+      "requestHeader": "7E0",
+      "command": "221674",
+      "expectedBytes": 2,
+      "formula": "(signed16(A, B) / 8) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 1,
+      "category": "Transmission",
+      "source": "Ford Mode 22 DID 1674 (Early CAN PCM)"
+    },
+    {
+      "id": "ford_ecm_oil_temp_f45c",
+      "name": "PCM Engine Oil Temp (UDS)",
+      "makes": ["Ford", "Lincoln", "Mercury"],
+      "moduleName": "PCM",
+      "requestHeader": "7E0",
+      "command": "22F45C",
+      "expectedBytes": 1,
+      "formula": "(A - 40) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 0,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F45C"
+    }
+  ]
+}

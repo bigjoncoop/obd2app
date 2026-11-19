@@ -1,0 +1,52 @@
+{
+  "pids": [
+    {
+      "id": "gm_tft_1940",
+      "name": "GM Transmission Fluid Temp",
+      "makes": ["GM", "Chevrolet", "GMC", "Cadillac", "Buick", "Pontiac", "Saturn"],
+      "moduleName": "TCM",
+      "requestHeader": "7E2",
+      "command": "221940",
+      "expectedBytes": 1,
+      "formula": "(A - 40) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 0,
+      "category": "Transmission",
+      "source": "GM Mode 22 DID 1940 (4L60E/6L80E/T43/T76 TCM)"
+    },
+    {
+      "id": "gm_ecm_coolant_f405",
+      "name": "ECM Coolant Temp (UDS)",
+      "makes": ["GM", "Chevrolet", "GMC", "Cadillac", "Buick"],
+      "moduleName": "ECM",
+      "requestHeader": "7E0",
+      "command": "22F405",
+      "expectedBytes": 1,
+      "formula": "(A - 40) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 0,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F405"
+    },
+    {
+      "id": "gm_ecm_oil_temp_f45c",
+      "name": "ECM Engine Oil Temp (UDS)",
+      "makes": ["GM", "Chevrolet", "GMC", "Cadillac", "Buick"],
+      "moduleName": "ECM",
+      "requestHeader": "7E0",
+      "command": "22F45C",
+      "expectedBytes": 1,
+      "formula": "(A - 40) * 9 / 5 + 32",
+      "unit": "°F",
+      "min": -40,
+      "max": 350,
+      "decimals": 0,
+      "category": "Engine",
+      "source": "ISO 15031-5 / UDS Mode 22 F45C"
+    }
+  ]
+}
