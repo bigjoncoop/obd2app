@@ -67,17 +67,55 @@ class CsvLogStorage @Inject constructor(
 ) {
     fun openNewCsvLog(filename: String): OpenCsvLogHandle {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            openViaMediaStore(filename)
+            openViaMediaStore(filename, "text/csv")
         } else {
             openViaLegacyStorage(filename)
         }
     }
 
-    private fun openViaMediaStore(filename: String): OpenCsvLogHandle {
+    /**
+     * Creates a companion file (e.g. `_mode06.csv`, `_extended.csv`, `_precleared.json`, `_session.zip`)
+     * in `Documents/OBDLogs` and returns `(uriString, OutputStream)`.
+     */
+    fun openCompanionOutput(filename: String, mimeType: String): Pair<String, OutputStream> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_DOCUMENTS}/$OBD_LOGS_SUBDIR"
+                )
+            }
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = resolver.insert(collection, values)
+                ?: throw IOException("Unable to create MediaStore entry for $filename")
+            val stream = resolver.openOutputStream(uri, "w")
+                ?: throw IOException("Unable to open output stream for $uri")
+            uri.toString() to stream
+        } else {
+            val handle = openViaLegacyStorage(filename)
+            // Return an output stream backed by the legacy file via ContentResolver if possible
+            val uri = Uri.parse(handle.uri)
+            handle.close()
+            val stream = context.contentResolver.openOutputStream(uri, "wt")
+                ?: throw IOException("Unable to open legacy output stream for $uri")
+            handle.uri to stream
+        }
+    }
+
+    fun openInputStream(uriString: String): java.io.InputStream? {
+        return runCatching {
+            context.contentResolver.openInputStream(Uri.parse(uriString))
+        }.getOrNull()
+    }
+
+    private fun openViaMediaStore(filename: String, mimeType: String): OpenCsvLogHandle {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-            put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
             put(
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 "${Environment.DIRECTORY_DOCUMENTS}/$OBD_LOGS_SUBDIR"
