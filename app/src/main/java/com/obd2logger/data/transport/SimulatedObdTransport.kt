@@ -56,12 +56,16 @@ class SimulatedObdTransport(
     private var spacesEnabled = true
     private var linefeedsEnabled = true
     private var headersEnabled = false
+    private var currentHeader = "7DF"
+    private var dtcsCleared = false
 
     override suspend fun open() {
         echoEnabled = true
         spacesEnabled = true
         linefeedsEnabled = true
         headersEnabled = false
+        currentHeader = "7DF"
+        dtcsCleared = false
         commandBuffer.clear()
         delay(80)
         _isOpenFlow.value = true
@@ -104,6 +108,7 @@ class SimulatedObdTransport(
                 spacesEnabled = true
                 linefeedsEnabled = true
                 headersEnabled = false
+                currentHeader = "7DF"
                 "ELM327 v1.5"
             }
             normalized == "ATI" -> "ELM327 v1.5"
@@ -139,6 +144,11 @@ class SimulatedObdTransport(
                 headersEnabled = true
                 "OK"
             }
+            normalized.startsWith("ATSH") -> {
+                currentHeader = normalized.removePrefix("ATSH").ifEmpty { "7DF" }
+                "OK"
+            }
+            normalized.startsWith("ATCRA") || normalized.startsWith("ATFCS") -> "OK"
             normalized.startsWith("ATAT") || normalized.startsWith("ATSP") || normalized.startsWith("ATST") -> "OK"
             normalized == "ATRV" -> "14.2V"
             normalized == "ATDP" -> "AUTO, ISO 15765-4 (CAN 11/500)"
@@ -182,18 +192,42 @@ class SimulatedObdTransport(
                 "41 $pidHex $data"
             }
 
-            // Stored, Pending, Permanent DTCs
-            cmd == "03" -> "43 02 01 71 04 20"
-            cmd == "07" -> "47 01 03 00 00 00"
+            // Stored, Pending, Permanent DTCs & Clear Codes (Mode 04)
+            cmd == "03" -> if (dtcsCleared) "43 00" else "43 02 01 71 04 20"
+            cmd == "04" -> {
+                dtcsCleared = true
+                "44"
+            }
+            cmd == "07" -> if (dtcsCleared) "47 00" else "47 01 03 00 00 00"
             cmd == "0A" -> "4A 01 01 71 00 00"
 
             // Mode 02 Freeze Frame (Frame 00)
-            cmd == "020200" -> "42 02 00 01 71"
+            cmd == "020200" -> if (dtcsCleared) "NO DATA" else "42 02 00 01 71"
             cmd.startsWith("02") && cmd.length == 6 && cmd.endsWith("00") -> {
+                if (dtcsCleared) return "NO DATA"
                 val pidHex = cmd.substring(2, 4)
                 val ffData = freezeFramePidPayload(pidHex) ?: return "NO DATA"
                 "42 $pidHex 00 $ffData"
             }
+
+            // Mode 06 On-Board Monitor Test Results (SIMULATOR)
+            cmd == "0600" -> "46 00 80 00 00 01" // MID 01 + 20 bitmask
+            cmd == "0620" -> "46 20 80 00 00 01" // MID 21 + 40 bitmask
+            cmd == "0640" -> "46 40 00 00 00 01"
+            cmd == "0660" -> "46 60 00 00 00 01"
+            cmd == "0680" -> "46 80 00 00 00 01"
+            cmd == "06A0" -> "46 A0 40 00 00 00" // MID A2 (Misfire Cyl 1)
+            cmd == "0601" -> return "00A\r0: 46 01 01 0B 01 C2\r1: 01 5E 02 58 00 00" // O2 B1S1 PASS (0.450V in 0.350..0.600)
+            cmd == "0621" -> return "00A\r0: 46 21 80 03 00 1E\r1: 00 32 00 64 00 00" // Catalyst B1 FAIL demo (0.30 < 0.50..1.00)
+            cmd == "06A2" -> return "013\r0: 46 A2 0B 01 00 02\r1: 00 00 02 8F A2 0C\r2: 01 00 01 00 00 00\r3: 00 64 00 00 00 00"
+
+            // Mode 22 Sample Read-Only Manufacturer PIDs (SIMULATOR)
+            cmd == "22F405" && currentHeader == "7E0" -> "62 F4 05 82"       // 90°C = 194°F
+            cmd == "22F40C" && currentHeader == "7E0" -> "62 F4 0C 1C E8"    // 1850 rpm
+            cmd == "22F442" && currentHeader == "7E0" -> "62 F4 42 37 78"    // 14.20V
+            cmd == "22F45C" && currentHeader == "7E0" -> "62 F4 5C 87"       // 95°C = 203°F
+            cmd == "221940" && currentHeader == "7E2" -> "62 19 40 80"       // GM TFT 88°C = 190°F
+            cmd == "221E1C" && currentHeader == "7E1" -> "62 1E 1C 05 A0"    // Ford TFT 90°C = 194°F
 
             // Mode 09 Vehicle Info (ISO-TP multi-frame examples)
             cmd == "0900" -> "49 00 55 40 00 00" // Supports 02, 04, 06, 0A
@@ -223,7 +257,7 @@ class SimulatedObdTransport(
             "A0" -> "00 00 00 00"
 
             // Common Mode 01 PIDs
-            "01" -> "82 07 65 04" // MIL ON, 2 DTCs
+            "01" -> if (dtcsCleared) "00 07 65 65" else "82 07 65 04" // MIL ON 2 DTCs, or MIL OFF 0 DTCs after 04
             "03" -> "02 00"       // Closed loop
             "04" -> "5A"          // Engine load ~35%
             "05" -> "82"          // Coolant temp 90°C (194°F)

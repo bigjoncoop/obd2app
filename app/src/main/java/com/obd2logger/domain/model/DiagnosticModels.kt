@@ -1,5 +1,7 @@
 package com.obd2logger.domain.model
 
+import com.obd2logger.data.logging.SessionArtifactEntry
+
 /**
  * Decoded OBD-II Diagnostic Trouble Code with short plain-English description.
  */
@@ -123,6 +125,18 @@ data class SavedCsvLogSummary(
     val rowCount: Long = 0L
 )
 
+data class SessionLogGroup(
+    val stem: String,
+    val mainCsv: SavedCsvLogSummary?,
+    val mode06Csv: SavedCsvLogSummary?,
+    val extendedCsv: SavedCsvLogSummary?,
+    val preclearedJson: SavedCsvLogSummary?,
+    val sessionZip: SavedCsvLogSummary?,
+    val allFiles: List<SavedCsvLogSummary>,
+    val totalSizeBytes: Long,
+    val lastModifiedMs: Long
+)
+
 sealed class LoggingState {
     data object Idle : LoggingState()
 
@@ -142,7 +156,11 @@ sealed class LoggingState {
 
     data class Stopped(
         val summary: SavedCsvLogSummary,
-        val diagnostics: SessionDiagnosticSnapshot
+        val diagnostics: SessionDiagnosticSnapshot,
+        val artifacts: List<SessionArtifactEntry> = emptyList(),
+        val zipUri: String? = null,
+        val zipFilename: String? = null,
+        val isZipBuilding: Boolean = false
     ) : LoggingState()
 
     data class Error(

@@ -11,6 +11,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.obd2logger.domain.model.SavedCsvLogSummary
+import com.obd2logger.domain.model.SessionLogGroup
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.BufferedWriter
 import java.io.File
@@ -95,13 +96,18 @@ class CsvLogStorage @Inject constructor(
                 ?: throw IOException("Unable to open output stream for $uri")
             uri.toString() to stream
         } else {
-            val handle = openViaLegacyStorage(filename)
-            // Return an output stream backed by the legacy file via ContentResolver if possible
-            val uri = Uri.parse(handle.uri)
-            handle.close()
-            val stream = context.contentResolver.openOutputStream(uri, "wt")
-                ?: throw IOException("Unable to open legacy output stream for $uri")
-            handle.uri to stream
+            val file = resolveLegacyFile(filename)
+            val stream = FileOutputStream(file, false)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            uri.toString() to stream
+        }
+    }
+
+    fun openCompanionCsvHandle(filename: String): OpenCsvLogHandle {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            openViaMediaStore(filename, "text/csv")
+        } else {
+            openViaLegacyStorage(filename)
         }
     }
 
@@ -136,19 +142,19 @@ class CsvLogStorage @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    private fun openViaLegacyStorage(filename: String): OpenCsvLogHandle {
+    private fun resolveLegacyFile(filename: String): File {
         val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
         val targetDir = File(docsDir, OBD_LOGS_SUBDIR)
         if (!targetDir.exists() && !targetDir.mkdirs()) {
             val fallbackDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), OBD_LOGS_SUBDIR)
             fallbackDir.mkdirs()
-            val file = File(fallbackDir, filename)
-            val stream = FileOutputStream(file, false)
-            val writer = BufferedWriter(OutputStreamWriter(stream, Charsets.UTF_8))
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            return OpenCsvLogHandle(uri.toString(), filename, stream, writer)
+            return File(fallbackDir, filename)
         }
-        val file = File(targetDir, filename)
+        return File(targetDir, filename)
+    }
+
+    private fun openViaLegacyStorage(filename: String): OpenCsvLogHandle {
+        val file = resolveLegacyFile(filename)
         val stream = FileOutputStream(file, false)
         val writer = BufferedWriter(OutputStreamWriter(stream, Charsets.UTF_8))
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -163,6 +169,8 @@ class CsvLogStorage @Inject constructor(
         }
     }
 
+    fun listSessionGroups(): List<SessionLogGroup> = groupSavedLogs(listSavedLogs())
+
     private fun listViaMediaStore(): List<SavedCsvLogSummary> {
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -173,8 +181,8 @@ class CsvLogStorage @Inject constructor(
             MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.RELATIVE_PATH
         )
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
-        val selectionArgs = arrayOf("%$OBD_LOGS_SUBDIR%", "%.csv")
+        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+        val selectionArgs = arrayOf("%$OBD_LOGS_SUBDIR%")
         val sortOrder = "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
 
         val results = mutableListOf<SavedCsvLogSummary>()
@@ -188,6 +196,7 @@ class CsvLogStorage @Inject constructor(
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     val name = cursor.getString(nameCol) ?: continue
+                    if (!isRecognizedLogFile(name)) continue
                     val size = cursor.getLong(sizeCol)
                     val dateModifiedSec = cursor.getLong(modCol)
                     val uri = ContentUris.withAppendedId(collection, id)
@@ -212,7 +221,7 @@ class CsvLogStorage @Inject constructor(
             File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), OBD_LOGS_SUBDIR)
         )
         val files = dirs.flatMap { dir ->
-            dir.listFiles { f -> f.isFile && f.name.endsWith(".csv", ignoreCase = true) }?.toList().orEmpty()
+            dir.listFiles { f -> f.isFile && isRecognizedLogFile(f.name) }?.toList().orEmpty()
         }.sortedByDescending { it.lastModified() }
 
         return files.mapNotNull { file ->
@@ -226,6 +235,11 @@ class CsvLogStorage @Inject constructor(
                 )
             }.getOrNull()
         }
+    }
+
+    private fun isRecognizedLogFile(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.endsWith(".csv") || lower.endsWith(".json") || lower.endsWith(".zip")
     }
 
     fun queryFileSize(uriString: String): Long {
@@ -246,8 +260,13 @@ class CsvLogStorage @Inject constructor(
 
     fun buildShareIntent(uriString: String, filename: String): Intent {
         val uri = Uri.parse(uriString)
+        val mime = when {
+            filename.endsWith(".zip", ignoreCase = true) -> "application/zip"
+            filename.endsWith(".json", ignoreCase = true) -> "application/json"
+            else -> "text/csv"
+        }
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
+            type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "OBD2 Log: $filename")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -291,5 +310,33 @@ class CsvLogStorage @Inject constructor(
     companion object {
         const val OBD_LOGS_SUBDIR = "OBDLogs"
         const val DISPLAY_FOLDER_PATH = "Documents/$OBD_LOGS_SUBDIR"
+
+        private val STEM_REGEX = Regex("^(trackLog-\\d{4}-[A-Za-z]{3}-\\d{2}_\\d{2}-\\d{2}-\\d{2})(?:_.*)?\\.(csv|json|zip)$")
+
+        fun extractSessionStem(filename: String): String {
+            return STEM_REGEX.matchEntire(filename)?.groupValues?.get(1)
+                ?: filename.substringBeforeLast('.')
+        }
+
+        fun groupSavedLogs(files: List<SavedCsvLogSummary>): List<SessionLogGroup> {
+            val byStem = linkedMapOf<String, MutableList<SavedCsvLogSummary>>()
+            for (file in files) {
+                val stem = extractSessionStem(file.filename)
+                byStem.getOrPut(stem) { mutableListOf() }.add(file)
+            }
+            return byStem.entries.map { (stem, list) ->
+                SessionLogGroup(
+                    stem = stem,
+                    mainCsv = list.firstOrNull { it.filename == "$stem.csv" },
+                    mode06Csv = list.firstOrNull { it.filename == "${stem}_mode06.csv" },
+                    extendedCsv = list.firstOrNull { it.filename == "${stem}_extended.csv" },
+                    preclearedJson = list.firstOrNull { it.filename == "${stem}_precleared.json" },
+                    sessionZip = list.firstOrNull { it.filename == "${stem}_session.zip" },
+                    allFiles = list,
+                    totalSizeBytes = list.sumOf { it.sizeBytes },
+                    lastModifiedMs = list.maxOfOrNull { it.lastModifiedMs } ?: 0L
+                )
+            }.sortedByDescending { it.lastModifiedMs }
+        }
     }
 }
