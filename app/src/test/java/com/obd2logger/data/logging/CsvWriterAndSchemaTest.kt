@@ -47,7 +47,9 @@ class CsvWriterAndSchemaTest {
     fun `every file has identical header and column count regardless of supported PIDs`() {
         val header = CsvSchema.headers
         val expectedCount = CsvSchema.columns.size
-        assertTrue(expectedCount > 100)
+        assertEquals(137, expectedCount)
+        assertEquals("GPS Time", header.first())
+        assertEquals("Session ID", header.last())
         // Ensure no duplicate headers
         assertEquals(expectedCount, header.toSet().size)
         // Ensure MAF is g/s
